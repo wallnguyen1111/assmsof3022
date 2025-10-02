@@ -1,0 +1,1449 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <title data-i18n="app.title">App Ghi chú</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+    <style>
+        body { background:#f4f6f8; }
+        .left-menu { width:140px; background:linear-gradient(#0d3b66,#1f6f8b); color:white; min-height:100vh; padding:16px; }
+        .calendar-cell { height:92px; border:1px solid #ddd; background:white; cursor:pointer; position:relative; padding:6px; }
+        .calendar-cell .day { font-weight:600; }
+        .has-note { box-shadow: inset 0 0 0 2px #1976d2; }
+        .has-exam { box-shadow: inset 0 0 0 2px #d9534f; }
+        .selected { background:#63eaea !important; }
+
+        /* Right panel: scrollable so users can swipe/scroll when many items */
+        .right-panel { width:360px; background:#efeef1; min-height:100vh; padding:10px; position:relative; overflow-y:auto; max-height:calc(100vh - 0px); -webkit-overflow-scrolling: touch; }
+
+        .floating-add { position:absolute; right:12px; bottom:12px; width:56px; height:56px; border-radius:28px; background:black; color:white; display:flex; align-items:center; justify-content:center; font-size:28px; cursor:pointer; z-index:2000; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .badge-exam { background:#d9534f; color:white; padding:3px 6px; border-radius:6px; font-size:11px; }
+        .badge-note { background:#1976d2; color:white; padding:3px 6px; border-radius:6px; font-size:11px; }
+        .month-nav { display:flex; gap:8px; align-items:center; justify-content:center; }
+
+        /* Task card styles */
+        .task-card { border:1px solid transparent; padding:10px; border-radius:8px; background: #fff; margin-bottom:8px; display:block; }
+        .task-actions { margin-top:8px; display:flex; gap:6px; justify-content:flex-end; }
+        .status-pending { background:white; color:#000; border:1px solid transparent; }
+        .status-overdue { border:2px solid #e63946; font-weight:700; box-shadow: 0 2px 10px rgba(230,57,70,0.07); }
+        .status-overdue .status-icon { margin-right:6px; }
+        .status-done { border:2px solid #2a9d8f; text-decoration:line-through; opacity:0.95; }
+        .status-label { font-weight:600; font-size:12px; padding:2px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:6px; }
+        .small-muted { font-size:12px; color:#666; }
+
+        /* delete red btn style */
+        .btn-delete-item { background:#e63946; color:#fff; border:none; }
+        .btn-delete-item:hover { background:#c03036; color:#fff; }
+
+        /* reminder popup */
+        #reminderPopup {
+            position: fixed;
+            left: 50%;
+            top: 12%;
+            transform: translateX(-50%);
+            z-index: 9999;
+            max-width: 520px;
+            width: calc(100% - 40px);
+            display: none;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+        }
+
+        /* Stats full-page */
+        #statsPage { display: none; padding: 18px; position: fixed; left: 140px; right: 0; top:0; bottom:0; overflow:auto; background: #f4f6f8; z-index: 1050; }
+        #statsPage .stats-header { display:flex; gap:12px; align-items:center; margin-bottom:12px; position: relative; }
+        /* Important: ensure controls & select render above the chart/canvas */
+        #statsPage .stats-controls { display:flex; gap:8px; align-items:center; position: relative; z-index: 3000; }
+        #statsSubjectFilter { position: relative; z-index: 4000; }
+
+        #statsPage .stats-main { background: white; border-radius:8px; padding:16px; box-shadow: 0 6px 18px rgba(0,0,0,0.06); position: relative; z-index: 1000; overflow:auto; max-height: calc(100vh - 160px); }
+        #statsPage .small-muted { color: #666; font-size: 0.9rem; }
+        #statsChart { width: 100% !important; max-height: 420px; display:block; }
+
+        /* make filter/header sticky so subject names aren't hidden */
+        #statsPage .stats-header { position: sticky; top: 0; background: transparent; padding-top: 12px; padding-bottom: 6px; z-index: 500; }
+
+        /* smaller devices */
+        @media (max-width: 900px) {
+            .right-panel { width: 100%; position:static; }
+            .left-menu { display:none; }
+            #statsPage { left: 0; } /* make stats use full width on mobile */
+        }
+
+        /* language switcher style */
+        #langSwitcherWrap { position: fixed; right: 12px; top: 12px; z-index: 6000; }
+    </style>
+</head>
+<body>
+<div class="d-flex">
+    <div class="left-menu">
+        <h5 class="text-white" data-i18n="app.title">App Ghi chú</h5>
+        <div class="mt-3">
+            <button id="homeBtn" class="btn btn-sm btn-primary w-100 mb-2" data-i18n="btn.home">Trang chủ</button>
+            <button id="statsBtn" class="btn btn-sm btn-outline-light w-100 mb-2" data-i18n="btn.stats">Thống kê thời gian</button>
+        </div>
+    </div>
+
+    <!-- Main content area (calendar + right-panel) -->
+    <div class="flex-grow-1 d-flex" style="min-height:100vh;">
+        <!-- Center calendar column -->
+        <div class="flex-grow-1 p-4" id="mainCenter">
+            <div class="month-nav mb-3">
+                <button id="prevMonth" class="btn btn-light">&lt;</button>
+                <h4 id="monthLabel" class="m-0"></h4>
+                <button id="nextMonth" class="btn btn-light ms-2">&gt;</button>
+                <button id="todayBtn" class="btn btn-outline-secondary ms-2" data-i18n="btn.today">Hôm nay</button>
+            </div>
+
+            <div class="container">
+                <div class="row g-2" id="weekdayHeader"></div>
+                <div class="row g-2 mt-1" id="calendarGrid"></div>
+            </div>
+        </div>
+
+        <!-- Right panel -->
+        <div class="right-panel" id="rightPanel">
+            <h5 data-i18n="detail.title">Chi tiết ngày</h5>
+            <div id="selectedDateLabel" class="mb-2">Ngày: --</div>
+            <div>
+                <h6 data-i18n="exams.title">Exams</h6>
+                <div id="examsList"></div>
+            </div>
+            <div class="mt-3">
+                <h6 data-i18n="notes.title">Notes</h6>
+                <div id="notesList"></div>
+            </div>
+
+            <!-- floating add button -->
+            <div id="addBtn" class="floating-add" title="Thêm" data-i18n-title="add">+</div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Full Page (replaces modal) using hash-based routing -->
+<div id="statsPage" aria-hidden="true">
+    <div class="container-fluid" style="padding-top:20px; padding-bottom:30px;">
+        <div class="stats-header">
+            <button id="backToHomeBtn" class="btn btn-outline-secondary btn-sm" data-i18n="btn.back">← Về Trang chủ</button>
+            <h4 id="statsTitle" style="margin:0;" data-i18n="stats.title">Thống kê thời gian học (tuần)</h4>
+            <div style="flex:1"></div>
+            <div class="stats-controls">
+                <button id="prevWeekBtn" class="btn btn-sm btn-light" data-i18n="btn.prevWeek">Tuần trước</button>
+                <button id="nextWeekBtn" class="btn btn-sm btn-light" data-i18n="btn.nextWeek">Tuần sau</button>
+                <button id="thisWeekBtn" class="btn btn-sm btn-outline-secondary" data-i18n="btn.thisWeek">Tuần hiện tại</button>
+                <label class="small-muted" style="margin-left:12px; margin-right:6px;" data-i18n="filter.subject">Lọc môn:</label>
+                <select id="statsSubjectFilter" class="form-control" style="display:inline-block; width:220px;">
+                    <option value="__all" data-i18n="filter.allSubjects">Tất cả môn</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="stats-main">
+            <div class="small-muted mb-2"><span data-i18n="stats.weekLabelPrefix">Tuần hiển thị:</span> <span id="statsWeekLabel"></span></div>
+            <canvas id="statsChart" height="320"></canvas>
+            <div id="statsSummary" class="mt-3 small-muted"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Reminder popup -->
+<div id="reminderPopup" class="card border-primary bg-white">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h5 id="reminderTitle" class="card-title mb-1"></h5>
+                <p id="reminderContent" class="card-text small mb-1"></p>
+                <div id="reminderMeta" class="small text-muted"></div>
+            </div>
+            <div>
+                <button id="reminderCloseBtn" class="btn btn-sm btn-outline-secondary" data-i18n="btn.close">Đóng</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for create/edit (kept as-is) -->
+<div class="modal fade" id="mainModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle" data-i18n="modal.add">Thêm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Note & Exam forms (kept unchanged aside from placeholders where useful) -->
+                <div id="noteForm">
+                    <input type="hidden" id="noteId"/>
+                    <div id="noteErrors" class="alert alert-danger" style="display:none"></div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.date">Ngày</label>
+                            <input id="noteDate" type="date" class="form-control" required />
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.startTime">Giờ bắt đầu</label>
+                            <input id="noteStartTime" type="time" class="form-control" required />
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.endTime">Giờ kết thúc</label>
+                            <input id="noteEndTime" type="time" class="form-control" required />
+                        </div>
+
+                        <div class="col-md-6 mb-2">
+                            <label data-i18n="field.subject">Môn</label>
+                            <input id="noteSubject" class="form-control" required />
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label data-i18n="field.title">Tiêu đề</label>
+                            <input id="noteTitle" class="form-control" required />
+                        </div>
+                        <div class="col-12 mb-2">
+                            <label data-i18n="field.content">Nội dung</label>
+                            <textarea id="noteContent" class="form-control" rows="3" required></textarea>
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.priority">Priority</label>
+                            <select id="notePriority" class="form-control" required>
+                                <option value="Low">Low</option>
+                                <option value="Medium">Medium</option>
+                                <option value="High">High</option>
+                            </select>
+                        </div>
+                        <div class="col-md-8 mb-2">
+                            <label data-i18n="field.attachExam">Gắn vào Lịch thi (Exam)</label>
+                            <select id="noteExamSelect" class="form-control">
+                                <option value="">-- không gắn --</option>
+                            </select>
+                        </div>
+
+                        <div class="col-12 mt-2">
+                            <label class="form-label" data-i18n="remind">Thông báo (Reminder)</label>
+                            <div class="d-flex gap-2 align-items-center mb-2">
+                                <input id="noteRemindExact" type="datetime-local" class="form-control" placeholder="" data-i18n-placeholder="remind.placeholder"/>
+                            </div>
+                            <div class="d-flex gap-2 align-items-center">
+                                <input id="noteRemindOffsetNumber" type="number" min="1" class="form-control" style="width:120px" placeholder="Số"/>
+                                <select id="noteRemindOffsetUnit" class="form-control" style="width:160px">
+                                    <option value="minutes">phút trước</option>
+                                    <option value="hours">giờ trước</option>
+                                    <option value="weeks">tuần trước</option>
+                                    <option value="months">tháng trước</option>
+                                </select>
+                                <div class="small-muted" data-i18n="remind.relative">so với giờ bắt đầu</div>
+                            </div>
+                            <div class="small text-muted mt-1" data-i18n="remind.note">* Điền <strong>thời điểm chính xác</strong> hoặc <strong>số + đơn vị</strong>. Nếu cả hai đều điền thì dùng thời điểm chính xác.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="examForm" style="display:none">
+                    <input type="hidden" id="examId"/>
+                    <div id="examErrors" class="alert alert-danger" style="display:none"></div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <label data-i18n="field.examSubject">Môn thi (subject)</label>
+                            <input id="examSubject" class="form-control" />
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label data-i18n="field.examDate">Ngày thi</label>
+                            <input id="examDate" type="date" class="form-control" />
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.startTime">Giờ bắt đầu</label>
+                            <input id="examStartTime" type="time" class="form-control" />
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.duration">Thời lượng (phút)</label>
+                            <input id="examDuration" type="number" min="1" class="form-control" />
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label data-i18n="field.location">Địa điểm</label>
+                            <input id="examLocation" class="form-control" />
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label data-i18n="field.type">Loại</label>
+                            <input id="examType" class="form-control" placeholder="Giữa kỳ / Cuối kỳ" />
+                        </div>
+                        <div class="col-12 mb-2">
+                            <label data-i18n="field.description">Mô tả</label>
+                            <textarea id="examDescription" class="form-control" rows="3"></textarea>
+                        </div>
+
+                        <div class="col-12 mt-2">
+                            <label class="form-label" data-i18n="remind">Thông báo (Reminder)</label>
+                            <div class="d-flex gap-2 align-items-center mb-2">
+                                <input id="examRemindExact" type="datetime-local" class="form-control" placeholder="" data-i18n-placeholder="remind.placeholder"/>
+                            </div>
+                            <div class="d-flex gap-2 align-items-center">
+                                <input id="examRemindOffsetNumber" type="number" min="1" class="form-control" style="width:120px" placeholder="Số"/>
+                                <select id="examRemindOffsetUnit" class="form-control" style="width:160px">
+                                    <option value="minutes">phút trước</option>
+                                    <option value="hours">giờ trước</option>
+                                    <option value="weeks">tuần trước</option>
+                                    <option value="months">tháng trước</option>
+                                </select>
+                                <div class="small-muted" data-i18n="remind.relative">so với giờ bắt đầu</div>
+                            </div>
+                            <div class="small text-muted mt-1" data-i18n="remind.note">* Điền <strong>thời điểm chính xác</strong> hoặc <strong>số + đơn vị</strong>. Nếu cả hai đều điền thì dùng thời điểm chính xác.</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            <div class="modal-footer">
+                <button id="saveBtn" class="btn btn-primary" data-i18n="btn.save">Lưu</button>
+                <button class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="btn.close">Đóng</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- language switcher -->
+<div id="langSwitcherWrap">
+    <select id="langSwitch" aria-label="Language" style="padding:6px">
+        <option value="vi">Tiếng Việt</option>
+        <option value="en">English</option>
+    </select>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- i18next -->
+<script src="https://unpkg.com/i18next@23.0.1/dist/umd/i18next.min.js"></script>
+<script src="https://unpkg.com/i18next-browser-languagedetector@6.1.5/dist/umd/i18nextBrowserLanguageDetector.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+    // ---------- i18n setup ----------
+    const i18nResources = {
+        vi: {
+            translation: {
+                "app.title":"App Ghi chú",
+                "btn.home":"Trang chủ",
+                "btn.stats":"Thống kê thời gian",
+                "btn.today":"Hôm nay",
+                "btn.prevWeek":"Tuần trước",
+                "btn.nextWeek":"Tuần sau",
+                "btn.thisWeek":"Tuần hiện tại",
+                "btn.save":"Lưu",
+                "btn.close":"Đóng",
+                "btn.back":"← Về Trang chủ",
+                "stats.title":"Thống kê thời gian học (tuần)",
+                "stats.weekLabelPrefix":"Tuần hiển thị:",
+                "filter.subject":"Lọc môn:",
+                "filter.allSubjects":"Tất cả môn",
+                "detail.title":"Chi tiết ngày",
+                "exams.title":"Exams",
+                "notes.title":"Notes",
+                "no_exam":"Không có exam",
+                "no_note":"Không có note",
+                "add":"Thêm",
+                "remind":"Thông báo (Reminder)",
+                "remind.placeholder":"Chọn thời điểm thông báo (chính xác)",
+                "remind.relative":"so với giờ bắt đầu",
+                "remind.note":"* Điền <strong>thời điểm chính xác</strong> hoặc <strong>số + đơn vị</strong>. Nếu cả hai đều điền thì dùng thời điểm chính xác.",
+                "field.date":"Ngày",
+                "field.startTime":"Giờ bắt đầu",
+                "field.endTime":"Giờ kết thúc",
+                "field.subject":"Môn",
+                "field.title":"Tiêu đề",
+                "field.content":"Nội dung",
+                "field.priority":"Priority",
+                "field.attachExam":"Gắn vào Lịch thi (Exam)",
+                "field.examSubject":"Môn thi (subject)",
+                "field.examDate":"Ngày thi",
+                "field.duration":"Thời lượng (phút)",
+                "field.location":"Địa điểm",
+                "field.type":"Loại",
+                "field.description":"Mô tả",
+                "modal.add":"Thêm",
+                "total_done":"Tổng ghi chú Done trong tuần: {{total}}. Bỏ qua {{skipped}} note không có time range để tính.",
+                "minutes":"Phút"
+            }
+        },
+        en: {
+            translation: {
+                "app.title":"Notes & Exam App",
+                "btn.home":"Home",
+                "btn.stats":"Time stats",
+                "btn.today":"Today",
+                "btn.prevWeek":"Prev week",
+                "btn.nextWeek":"Next week",
+                "btn.thisWeek":"This week",
+                "btn.save":"Save",
+                "btn.close":"Close",
+                "btn.back":"← Back to Home",
+                "stats.title":"Study time statistics (week)",
+                "stats.weekLabelPrefix":"Week:",
+                "filter.subject":"Filter subject:",
+                "filter.allSubjects":"All subjects",
+                "detail.title":"Day details",
+                "exams.title":"Exams",
+                "notes.title":"Notes",
+                "no_exam":"No exam",
+                "no_note":"No note",
+                "add":"Add",
+                "remind":"Reminder",
+                "remind.placeholder":"Choose exact reminder time",
+                "remind.relative":"relative to start time",
+                "remind.note":"* Fill exact time or number+unit. Exact time takes precedence.",
+                "field.date":"Date",
+                "field.startTime":"Start time",
+                "field.endTime":"End time",
+                "field.subject":"Subject",
+                "field.title":"Title",
+                "field.content":"Content",
+                "field.priority":"Priority",
+                "field.attachExam":"Attach to Exam",
+                "field.examSubject":"Exam subject",
+                "field.examDate":"Exam date",
+                "field.duration":"Duration (minutes)",
+                "field.location":"Location",
+                "field.type":"Type",
+                "field.description":"Description",
+                "modal.add":"Add",
+                "total_done":"Total Done notes this week: {{total}}. Skipped {{skipped}} notes without time range.",
+                "minutes":"Minutes"
+            }
+        }
+    };
+
+    i18next
+        .use(i18nextBrowserLanguageDetector)
+        .init({
+            resources: i18nResources,
+            fallbackLng: 'vi',
+            debug: false,
+            detection: {
+                order: ['localStorage','querystring','navigator'],
+                caches: ['localStorage']
+            }
+        }).then(() => {
+        applyTranslations();
+        // After translations ready, initialize calendar & data
+        initAppAfterI18n();
+    });
+
+    // helper: apply translations to elements with data-i18n, data-i18n-placeholder, data-i18n-title
+    function applyTranslations() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            if (!key) return;
+            el.innerText = i18next.t(key);
+        });
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+            const key = el.getAttribute('data-i18n-placeholder');
+            if (!key) return;
+            el.setAttribute('placeholder', i18next.t(key));
+        });
+        document.querySelectorAll('[data-i18n-title]').forEach(el => {
+            const key = el.getAttribute('data-i18n-title');
+            if (!key) return;
+            el.setAttribute('title', i18next.t(key));
+        });
+        // update static options for subject filter label if present
+        const statsAllOpt = document.querySelector('#statsSubjectFilter option[value="__all"]');
+        if (statsAllOpt) statsAllOpt.innerText = i18next.t('filter.allSubjects');
+        // update monthLabel formatting if exists
+        if (typeof renderCalendar === 'function' && window._calendarReady) {
+            renderCalendar(); // redraw to pick up locales for month label
+        }
+        // update chart label if exists
+        if (typeof renderChartFromAggregated === 'function' && window.cachedWeekData) {
+            renderChartFromAggregated(window.cachedWeekData);
+        }
+    }
+
+    // language switcher
+    document.getElementById('langSwitch').addEventListener('change', (e) => {
+        const lng = e.target.value;
+        i18next.changeLanguage(lng).then(() => {
+            applyTranslations();
+        });
+    });
+
+    // ---------- Basic helpers ----------
+    function pad(n){ return String(n).padStart(2,'0'); }
+    function formatYMD(d) {
+        if (typeof d === 'string') return d;
+        const y = d.getFullYear();
+        const m = pad(d.getMonth()+1);
+        const day = pad(d.getDate());
+        return `${y}-${m}-${day}`;
+    }
+    function toDateTimeLocalValue(iso) {
+        if (!iso) return '';
+        const s = String(iso).trim();
+        if (s.length >= 16) return s.substring(0,16).replace(' ', 'T');
+        if (s.length === 10) return s + 'T00:00';
+        return s.replace(' ', 'T');
+    }
+    function dateTimeLocalToISO(value) {
+        if (!value) return null;
+        return value; // "yyyy-MM-ddTHH:mm"
+    }
+
+    // ---------- Reminder popup ----------
+    const scheduledReminders = {};
+    function showReminderPopup(title, content, meta) {
+        const popup = document.getElementById('reminderPopup');
+        document.getElementById('reminderTitle').innerText = title || i18next.t('remind');
+        document.getElementById('reminderContent').innerText = content || '';
+        document.getElementById('reminderMeta').innerText = meta || '';
+        popup.style.display = 'block';
+        popup.classList.add('show');
+        clearTimeout(popup._hideTimer);
+        popup._hideTimer = setTimeout(()=> { popup.style.display = 'none'; }, 8000);
+    }
+    document.getElementById('reminderCloseBtn').addEventListener('click', ()=> {
+        const popup = document.getElementById('reminderPopup');
+        popup.style.display = 'none';
+        clearTimeout(popup._hideTimer);
+    });
+
+    function normalizeRemindAt(raw) {
+        if (!raw) return null;
+        const s = String(raw).trim().replace(' ', 'T');
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function scheduleReminder(entity, type) {
+        if (!entity || !entity.id) return;
+        const key = `${type}-${entity.id}`;
+        if (scheduledReminders[key]) { clearTimeout(scheduledReminders[key]); delete scheduledReminders[key]; }
+        if (entity.status && String(entity.status).toLowerCase() === 'done') return;
+        const dt = normalizeRemindAt(entity.remindAt);
+        if (!dt) return;
+        const now = new Date();
+        const ms = dt.getTime() - now.getTime();
+        if (ms <= 0) return;
+        const MAX_TIMEOUT = 2147483647;
+        if (ms > MAX_TIMEOUT) {
+            scheduledReminders[key] = setTimeout(() => {
+                delete scheduledReminders[key];
+                scheduleReminder(entity, type);
+            }, MAX_TIMEOUT);
+            return;
+        }
+        scheduledReminders[key] = setTimeout(() => {
+            const title = type === 'note' ? (entity.title || entity.subject || i18next.t('remind')) : (entity.subject || 'Exam');
+            const content = entity.content || (entity.description || '') || '';
+            const meta = `${type === 'note' ? 'Note' : 'Exam'} • ${entity.date || entity.examDate || ''}`;
+            showReminderPopup(title, content, meta);
+            delete scheduledReminders[key];
+        }, ms);
+    }
+
+    function scheduleAllForList(list, type) {
+        if (!Array.isArray(list)) return;
+        list.forEach(it => scheduleReminder(it, type));
+    }
+
+    // ---------- API helpers (assume existing endpoints) ----------
+    async function fetchExamsByDate(dateStr) {
+        try {
+            const res = await fetch('/api/exams/byDate?date=' + dateStr);
+            if (!res.ok) return [];
+            return await res.json();
+        } catch(e){ console.error(e); return []; }
+    }
+    async function fetchNotesByDate(dateStr) {
+        try {
+            const res = await fetch('/api/notes?date=' + dateStr);
+            if (!res.ok) return [];
+            return await res.json();
+        } catch(e){ console.error(e); return []; }
+    }
+
+    // ---------- Calendar rendering ----------
+    const weekdayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    const weekdayHeader = document.getElementById('weekdayHeader');
+    weekdayHeader.innerHTML = '';
+    weekdayNames.forEach(d => {
+        const col = document.createElement('div');
+        col.className = 'col text-center fw-bold';
+        col.innerText = d;
+        weekdayHeader.appendChild(col);
+    });
+    const calendarGrid = document.getElementById('calendarGrid');
+    let viewDate = new Date();
+    let selectedDate = new Date();
+    window._calendarReady = false;
+
+    async function renderCalendar(){
+        calendarGrid.innerHTML = '';
+        const year = viewDate.getFullYear();
+        const month = viewDate.getMonth();
+        // local-aware month label
+        const locale = i18next.language || undefined;
+        document.getElementById('monthLabel').innerText = viewDate.toLocaleString(locale, { month: 'long', year: 'numeric' });
+
+        const first = new Date(year, month, 1);
+        const startDay = first.getDay();
+        const daysInMonth = new Date(year, month+1, 0).getDate();
+
+        // Prefetch day data for month
+        let promises = [];
+        for (let d=1; d<=daysInMonth; d++) {
+            const dateStr = `${year}-${pad(month+1)}-${pad(d)}`;
+            promises.push(Promise.all([fetchExamsByDate(dateStr), fetchNotesByDate(dateStr)]).then(([exs, nts]) => ({date:d, exs, nts})));
+        }
+        const results = await Promise.all(promises);
+        let map = {};
+        results.forEach(r => { map[r.date] = {exams: r.exs || [], notes: r.nts || []}; });
+
+        let cellCount = 42;
+        for (let i=0;i<cellCount;i++){
+            const col = document.createElement('div');
+            col.className = 'col-1 calendar-cell col-sm-1 col-md-1';
+            const dayNum = i - startDay + 1;
+            if (dayNum > 0 && dayNum <= daysInMonth){
+                col.innerHTML = `<div class="day">${dayNum}</div><div class="badges d-flex gap-1 mt-1"></div>`;
+                const dateStr = `${year}-${pad(month+1)}-${pad(dayNum)}`;
+                col.dataset.date = dateStr;
+                const cellData = map[dayNum];
+                const badges = col.querySelector('.badges');
+                if (cellData) {
+                    if (cellData.exams && cellData.exams.length > 0) {
+                        col.classList.add('has-exam');
+                        const b = document.createElement('span');
+                        b.className = 'badge-exam';
+                        b.innerText = `${cellData.exams.length} exam`;
+                        badges.appendChild(b);
+                    }
+                    if (cellData.notes && cellData.notes.length > 0) {
+                        col.classList.add('has-note');
+                        const b = document.createElement('span');
+                        b.className = 'badge-note';
+                        b.innerText = `${cellData.notes.length} note`;
+                        badges.appendChild(b);
+                    }
+                }
+                col.addEventListener('click', async () => {
+                    selectedDate = new Date(year, month, dayNum);
+                    document.getElementById('selectedDateLabel').innerText = 'Ngày: ' + dateStr;
+                    await loadDetailsForSelectedDate();
+                    highlightSelected();
+                });
+            }
+            calendarGrid.appendChild(col);
+        }
+        highlightSelected();
+        window._calendarReady = true;
+    }
+
+    function highlightSelected(){
+        document.querySelectorAll('.calendar-cell').forEach(c => c.classList.remove('selected'));
+        document.querySelectorAll('.calendar-cell').forEach(c => {
+            if (c.dataset.date === formatYMD(selectedDate)) c.classList.add('selected');
+        });
+    }
+
+    document.getElementById('prevMonth').addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()-1, 1); renderCalendar(); });
+    document.getElementById('nextMonth').addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()+1, 1); renderCalendar(); });
+    document.getElementById('todayBtn').addEventListener('click', async ()=>{ const now = new Date(); viewDate = new Date(now.getFullYear(), now.getMonth(), 1); selectedDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()); document.getElementById('selectedDateLabel').innerText = 'Ngày: ' + formatYMD(selectedDate); await renderCalendar(); await loadDetailsForSelectedDate(); });
+
+    async function loadDetailsForSelectedDate(){
+        const dateStr = formatYMD(selectedDate);
+        const exams = await fetchExamsByDate(dateStr);
+        const notes = await fetchNotesByDate(dateStr);
+        renderExamsList(exams);
+        renderNotesList(notes);
+        populateNoteExamSelect();
+        scheduleAllForList(exams || [], 'exam');
+        scheduleAllForList(notes || [], 'note');
+        window.currentExams = exams;
+        window.currentNotes = notes;
+    }
+
+    // ---------- Status helpers ----------
+    function parseDateTimeFromParts(dateStr, timeStr) {
+        if (!dateStr || !timeStr) return null;
+        const t = String(timeStr).trim();
+        if (!t) return null;
+        const tt = t.length >= 5 ? t.substring(0,5) : t;
+        const iso = `${dateStr}T${tt}`;
+        const d = new Date(iso);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    function computeDueDateTime(entity) {
+        if (entity && entity.hasOwnProperty('date')) {
+            if (entity.endTime) {
+                const d = parseDateTimeFromParts(entity.date, entity.endTime);
+                if (d) return d;
+            }
+            if (entity.time) {
+                const s = String(entity.time);
+                if (s.includes('-')) {
+                    const parts = s.split('-').map(x => x.trim());
+                    const end = parts[1] || parts[0];
+                    const d = parseDateTimeFromParts(entity.date, end);
+                    if (d) return d;
+                } else {
+                    const d = parseDateTimeFromParts(entity.date, s);
+                    if (d) return d;
+                }
+            }
+            if (entity.startTime) {
+                const d = parseDateTimeFromParts(entity.date, entity.startTime);
+                if (d) return d;
+            }
+        }
+        if (entity && entity.hasOwnProperty('examDate')) {
+            const date = entity.examDate;
+            const st = entity.startTime || '';
+            const start = parseDateTimeFromParts(date, st);
+            if (start) {
+                const dur = parseInt(entity.durationMinutes || entity.duration || 0);
+                if (!isNaN(dur) && dur > 0) {
+                    return new Date(start.getTime() + dur * 60 * 1000);
+                } else {
+                    return start;
+                }
+            }
+        }
+        return null;
+    }
+    function determineStatus(entity) {
+        if (!entity) return 'Pending';
+        if (entity.status && String(entity.status).toLowerCase() === 'done') return 'Done';
+        const now = new Date();
+        const due = computeDueDateTime(entity);
+        if (due) return (now > due) ? 'Overdue' : 'Pending';
+        const rawRemind = entity.remindAt ? String(entity.remindAt) : null;
+        if (!rawRemind) return 'Pending';
+        const normalized = rawRemind.replace(' ', 'T');
+        const remDt = new Date(normalized);
+        if (isNaN(remDt.getTime())) return 'Pending';
+        return (now > remDt) ? 'Overdue' : 'Pending';
+    }
+    function statusOrderIndex(status) {
+        if (status === 'Overdue') return 0;
+        if (status === 'Pending') return 1;
+        return 2; // Done
+    }
+
+    // ---------- Render lists (exams / notes) ----------
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; });
+    }
+
+    async function renderExamsList(exams) {
+        const container = document.getElementById('examsList');
+        container.innerHTML = '';
+        if (!exams || exams.length === 0) { container.innerHTML = `<div class="text-muted">${i18next.t('no_exam')}</div>`; return; }
+
+        exams.forEach(e => e._computedStatus = determineStatus(e));
+        exams.sort((a,b) => {
+            const sa = statusOrderIndex(a._computedStatus), sb = statusOrderIndex(b._computedStatus);
+            if (sa !== sb) return sa - sb;
+            const ra = a.remindAt ? new Date(String(a.remindAt).replace(' ', 'T')).getTime() : Infinity;
+            const rb = b.remindAt ? new Date(String(b.remindAt).replace(' ', 'T')).getTime() : Infinity;
+            return ra - rb;
+        });
+
+        exams.forEach(e => {
+            const div = document.createElement('div');
+            div.className = 'task-card';
+            div.dataset.type = 'exam';
+            div.dataset.id = e.id;
+            const status = e._computedStatus;
+            div.classList.add(status === 'Overdue' ? 'status-overdue' : status === 'Done' ? 'status-done' : 'status-pending');
+
+            let statusHTML = '';
+            if (status === 'Overdue') statusHTML = `<span class="status-label text-danger"><span class="status-icon">⚠️</span>Overdue</span>`;
+            else if (status === 'Done') statusHTML = `<span class="status-label text-success"><span class="status-icon">✅</span>Done</span>`;
+            else statusHTML = `<span class="status-label text-muted">Pending</span>`;
+
+            const remindInfo = e.remindAt ? `<div class="small-muted">Remind: ${String(e.remindAt).replace('T',' ')}</div>` : '';
+
+            div.innerHTML = `
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>${escapeHtml(e.subject)}</strong> <small class="text-muted">(${escapeHtml(e.type||'')})</small>
+                        <div class="small-muted">${escapeHtml(e.startTime)} • ${escapeHtml(e.durationMinutes)} phút</div>
+                        <div class="small-muted">${escapeHtml(e.location||'')}</div>
+                        <div class="small">${escapeHtml(e.description||'')}</div>
+                        ${remindInfo}
+                    </div>
+                    <div style="text-align:right">${statusHTML}</div>
+                </div>
+                <div class="task-actions">
+                    ${status !== 'Done' ? `<button class="btn btn-sm btn-success btn-mark-done" data-i18n="btn.markDone">Hoàn thành</button>` : `<button class="btn btn-sm btn-outline-secondary btn-mark-pending">Chưa hoàn thành</button>`}
+                    <button class="btn btn-sm btn-primary btn-edit">Sửa</button>
+                    <button class="btn btn-sm btn-delete-item">Xóa</button>
+                </div>
+            `;
+
+            div.querySelector('.btn-edit').addEventListener('click', async (ev)=> { ev.stopPropagation(); await openEditExam(e.id); });
+            div.querySelector('.btn-delete-item').addEventListener('click', async (ev)=> {
+                ev.stopPropagation();
+                if (!confirm('Xác nhận xóa exam?')) return;
+                const res = await fetch('/api/exams/' + e.id, { method:'DELETE' });
+                if (res.status === 204) { await loadDetailsForSelectedDate(); await renderCalendar(); }
+            });
+
+            const btnDone = div.querySelector('.btn-mark-done');
+            if (btnDone) btnDone.addEventListener('click', async (ev)=> { ev.stopPropagation(); await setExamStatus(e.id,'Done'); });
+            const btnPending = div.querySelector('.btn-mark-pending');
+            if (btnPending) btnPending.addEventListener('click', async (ev)=> { ev.stopPropagation(); await setExamStatus(e.id,'Pending'); });
+
+            container.appendChild(div);
+        });
+    }
+
+    async function renderNotesList(notes) {
+        const container = document.getElementById('notesList');
+        container.innerHTML = '';
+        if (!notes || notes.length === 0) { container.innerHTML = `<div class="text-muted">${i18next.t('no_note')}</div>`; return; }
+
+        notes.forEach(n => n._computedStatus = determineStatus(n));
+        notes.sort((a,b) => {
+            const sa = statusOrderIndex(a._computedStatus), sb = statusOrderIndex(b._computedStatus);
+            if (sa !== sb) return sa - sb;
+            const ra = a.remindAt ? new Date(String(a.remindAt).replace(' ', 'T')).getTime() : Infinity;
+            const rb = b.remindAt ? new Date(String(b.remindAt).replace(' ', 'T')).getTime() : Infinity;
+            return ra - rb;
+        });
+
+        notes.forEach(n => {
+            const div = document.createElement('div');
+            div.className = 'task-card';
+            div.dataset.type = 'note';
+            div.dataset.id = n.id;
+            const status = n._computedStatus;
+            div.classList.add(status === 'Overdue' ? 'status-overdue' : status === 'Done' ? 'status-done' : 'status-pending');
+
+            let statusHTML = '';
+            if (status === 'Overdue') statusHTML = `<span class="status-label text-danger"><span class="status-icon">⚠️</span>Overdue</span>`;
+            else if (status === 'Done') statusHTML = `<span class="status-label text-success"><span class="status-icon">✅</span>Done</span>`;
+            else statusHTML = `<span class="status-label text-muted">Pending</span>`;
+
+            const examInfo = n.exam ? `<div class="small text-danger">Gắn Exam: ${escapeHtml(n.exam.subject)}</div>` : '';
+            const remindInfo = n.remindAt ? `<div class="small-muted">Remind: ${String(n.remindAt).replace('T',' ')}</div>` : '';
+
+            div.innerHTML = `
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>${escapeHtml(n.title || n.subject)}</strong>
+                        <div class="small-muted">${escapeHtml(n.time || '')} • ${escapeHtml(n.priority || '')}</div>
+                        ${examInfo}
+                        <div class="small">${escapeHtml(n.content || '')}</div>
+                        ${remindInfo}
+                    </div>
+                    <div style="text-align:right">${statusHTML}</div>
+                </div>
+                <div class="task-actions">
+                    ${status !== 'Done' ? `<button class="btn btn-sm btn-success btn-mark-done">Hoàn thành</button>` : `<button class="btn btn-sm btn-outline-secondary btn-mark-pending">Chưa hoàn thành</button>`}
+                    <button class="btn btn-sm btn-primary btn-edit">Sửa</button>
+                    <button class="btn btn-sm btn-delete-item">Xóa</button>
+                </div>
+            `;
+
+            div.querySelector('.btn-edit').addEventListener('click', async (ev)=> { ev.stopPropagation(); await openEditNote(n.id); });
+
+            div.querySelector('.btn-delete-item').addEventListener('click', async (ev)=> {
+                ev.stopPropagation();
+                if (!confirm('Xác nhận xóa note?')) return;
+                const res = await fetch('/api/notes/' + n.id, { method:'DELETE' });
+                if (res.status === 204) { await loadDetailsForSelectedDate(); await renderCalendar(); }
+            });
+
+            const btnDone = div.querySelector('.btn-mark-done');
+            if (btnDone) btnDone.addEventListener('click', async (ev)=> { ev.stopPropagation(); await setNoteStatus(n.id,'Done'); });
+            const btnPending = div.querySelector('.btn-mark-pending');
+            if (btnPending) btnPending.addEventListener('click', async (ev)=> { ev.stopPropagation(); await setNoteStatus(n.id,'Pending'); });
+
+            container.appendChild(div);
+        });
+    }
+
+    async function populateNoteExamSelect() {
+        const sel = document.getElementById('noteExamSelect');
+        sel.innerHTML = '<option value="">-- không gắn --</option>';
+        const exams = await fetchExamsByDate(formatYMD(selectedDate));
+        exams.forEach(e => {
+            const opt = document.createElement('option');
+            opt.value = e.id;
+            opt.innerText = `${e.subject} (${e.startTime})`;
+            sel.appendChild(opt);
+        });
+    }
+
+    // ---------- save flows ----------
+    function computeRemindFromOffset(baseDate, num, unit) {
+        if (!baseDate || !num || num <= 0) return null;
+        const r = new Date(baseDate.getTime());
+        if (unit === 'minutes') r.setMinutes(r.getMinutes() - num);
+        else if (unit === 'hours') r.setHours(r.getHours() - num);
+        else if (unit === 'weeks') r.setDate(r.getDate() - num * 7);
+        else if (unit === 'months') r.setMonth(r.getMonth() - num);
+        return `${r.getFullYear()}-${pad(r.getMonth()+1)}-${pad(r.getDate())}T${pad(r.getHours())}:${pad(r.getMinutes())}`;
+    }
+
+    async function saveExamFromModal() {
+        const errDiv = document.getElementById('examErrors');
+        errDiv.style.display = 'none'; errDiv.innerHTML = '';
+
+        const id = document.getElementById('examId').value;
+        const subject = (document.getElementById('examSubject').value || '').trim();
+        const examDate = document.getElementById('examDate').value;
+        const startTime = document.getElementById('examStartTime').value;
+        const duration = parseInt(document.getElementById('examDuration').value || '0');
+        const location = (document.getElementById('examLocation').value || '').trim();
+        const type = (document.getElementById('examType').value || '').trim();
+        const description = (document.getElementById('examDescription').value || '').trim();
+
+        const remindExact = document.getElementById('examRemindExact').value;
+        const remindOffsetNum = parseInt(document.getElementById('examRemindOffsetNumber').value || '0');
+        const remindOffsetUnit = document.getElementById('examRemindOffsetUnit').value;
+
+        const clientErrors = {};
+        if (!subject) clientErrors.subject = 'Nhập môn thi (subject)';
+        if (!examDate) clientErrors.examDate = 'Chọn ngày thi';
+        if (!startTime) clientErrors.startTime = 'Chọn giờ bắt đầu';
+        if (!(duration > 0)) clientErrors.duration = 'Nhập thời lượng (>0 phút)';
+
+        if (Object.keys(clientErrors).length > 0) {
+            errDiv.style.display = 'block';
+            errDiv.innerHTML = Object.values(clientErrors).map(v => `<div>${v}</div>`).join('');
+            return;
+        }
+
+        let remindAt = null;
+        if (remindExact) {
+            remindAt = dateTimeLocalToISO(remindExact);
+        } else if (remindOffsetNum && remindOffsetNum > 0) {
+            if (examDate && startTime) {
+                const base = new Date(`${examDate}T${startTime}`);
+                remindAt = computeRemindFromOffset(base, remindOffsetNum, remindOffsetUnit);
+            }
+        }
+
+        const payload = {
+            subject: subject,
+            examDate: examDate,
+            startTime: startTime,
+            durationMinutes: duration,
+            location: location,
+            type: type,
+            description: description,
+            remindAt: remindAt
+        };
+
+        const url = id ? '/api/exams/' + id : '/api/exams';
+        const method = id ? 'PUT' : 'POST';
+
+        try {
+            const res = await fetch(url, {
+                method: method,
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(payload)
+            });
+
+            if (res.status === 400) {
+                const json = await res.json();
+                errDiv.style.display = 'block';
+                errDiv.innerHTML = Object.values(json).map(v => `<div>${v}</div>`).join('');
+                return;
+            } else if (!res.ok) {
+                errDiv.style.display = 'block';
+                errDiv.innerHTML = `<div>Lỗi server: ${res.status}</div>`;
+                return;
+            }
+
+            const modalEl = document.getElementById('mainModal');
+            const bs = bootstrap.Modal.getInstance(modalEl);
+            if (bs) bs.hide();
+            await renderCalendar();
+            await loadDetailsForSelectedDate();
+        } catch (err) {
+            console.error(err);
+            errDiv.style.display = 'block';
+            errDiv.innerHTML = `<div>Lỗi kết nối</div>`;
+        }
+    }
+
+    async function saveNoteFromModal() {
+        const errDiv = document.getElementById('noteErrors');
+        errDiv.style.display = 'none'; errDiv.innerHTML = '';
+
+        const id = document.getElementById('noteId').value;
+        const date = document.getElementById('noteDate').value;
+        const start = document.getElementById('noteStartTime').value;
+        const end = document.getElementById('noteEndTime').value;
+        const subject = document.getElementById('noteSubject').value.trim();
+        const title = document.getElementById('noteTitle').value.trim();
+        const content = document.getElementById('noteContent').value.trim();
+        const priority = document.getElementById('notePriority').value;
+        const examId = document.getElementById('noteExamSelect').value || null;
+
+        const remindExact = document.getElementById('noteRemindExact').value;
+        const remindOffsetNum = parseInt(document.getElementById('noteRemindOffsetNumber').value || '0');
+        const remindOffsetUnit = document.getElementById('noteRemindOffsetUnit').value;
+
+        const clientErrors = {};
+        if (!date) clientErrors.date = 'Chọn ngày';
+        if (!start) clientErrors.startTime = 'Chọn giờ bắt đầu';
+        if (!end) clientErrors.endTime = 'Chọn giờ kết thúc';
+        if (start && end && start >= end) clientErrors.timeRange = 'Giờ kết thúc phải lớn hơn giờ bắt đầu';
+        if (!subject) clientErrors.subject = 'Nhập môn';
+        if (!title) clientErrors.title = 'Nhập tiêu đề';
+        if (!content) clientErrors.content = 'Nhập nội dung';
+
+        if (Object.keys(clientErrors).length > 0) {
+            errDiv.style.display = 'block';
+            errDiv.innerHTML = Object.values(clientErrors).map(v => `<div>${v}</div>`).join('');
+            return;
+        }
+
+        let remindAt = null;
+        if (remindExact) {
+            remindAt = dateTimeLocalToISO(remindExact);
+        } else if (remindOffsetNum && remindOffsetNum > 0) {
+            if (date && start) {
+                const base = new Date(`${date}T${start}`);
+                remindAt = computeRemindFromOffset(base, remindOffsetNum, remindOffsetUnit);
+            }
+        }
+
+        const payload = {
+            date: date,
+            startTime: start,
+            endTime: end,
+            subject: subject,
+            title: title,
+            content: content,
+            priority: priority,
+            tags: '',
+            examId: examId ? parseInt(examId) : null,
+            remindAt: remindAt
+        };
+
+        const url = id ? '/api/notes/' + id : '/api/notes';
+        const method = id ? 'PUT' : 'POST';
+
+        try {
+            const res = await fetch(url, {
+                method: method,
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(payload)
+            });
+
+            if (res.status === 400) {
+                const json = await res.json();
+                errDiv.style.display = 'block';
+                errDiv.innerHTML = Object.values(json).map(v => `<div>${v}</div>`).join('');
+                return;
+            } else if (!res.ok) {
+                errDiv.style.display = 'block';
+                errDiv.innerHTML = `<div>Lỗi server: ${res.status}</div>`;
+                return;
+            }
+
+            const modalEl = document.getElementById('mainModal');
+            const bs = bootstrap.Modal.getInstance(modalEl);
+            if (bs) bs.hide();
+            await renderCalendar();
+            await loadDetailsForSelectedDate();
+        } catch (err) {
+            console.error(err);
+            errDiv.style.display = 'block';
+            errDiv.innerHTML = `<div>Lỗi kết nối</div>`;
+        }
+    }
+
+    document.getElementById('saveBtn').addEventListener('click', async ()=> {
+        // decide based on which form visible
+        const examFormVisible = document.getElementById('examForm').style.display !== 'none';
+        if (examFormVisible) await saveExamFromModal(); else await saveNoteFromModal();
+    });
+
+    // ---------- status endpoints ----------
+    async function setExamStatus(id, status) {
+        try {
+            const res = await fetch('/api/exams/' + id + '/status', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status}) });
+            if (res.ok) { await loadDetailsForSelectedDate(); await renderCalendar(); }
+        } catch(e){ console.error(e); }
+    }
+    async function setNoteStatus(id, status) {
+        try {
+            const res = await fetch('/api/notes/' + id + '/status', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status}) });
+            if (res.ok) { await loadDetailsForSelectedDate(); await renderCalendar(); }
+        } catch(e){ console.error(e); }
+    }
+
+    // ---------- edit handlers ----------
+    async function openEditExam(id) {
+        try {
+            const res = await fetch('/api/exams/' + id);
+            if (!res.ok) { alert('Không lấy được dữ liệu exam'); return; }
+            const e = await res.json();
+            document.getElementById('noteForm').style.display='none';
+            document.getElementById('examForm').style.display='';
+            document.getElementById('modalTitle').innerText=i18next.t('modal.add');
+
+            document.getElementById('examId').value = e.id ?? '';
+            document.getElementById('examSubject').value = e.subject ?? '';
+            document.getElementById('examDate').value = e.examDate ?? '';
+            const st = e.startTime || '';
+            document.getElementById('examStartTime').value = st.length >= 5 ? st.substring(0,5) : st;
+            document.getElementById('examDuration').value = e.durationMinutes ?? '';
+            document.getElementById('examLocation').value = e.location ?? '';
+            document.getElementById('examType').value = e.type ?? '';
+            document.getElementById('examDescription').value = e.description ?? '';
+
+            document.getElementById('examRemindExact').value = toDateTimeLocalValue(e.remindAt || '');
+            document.getElementById('examRemindOffsetNumber').value = '';
+            document.getElementById('examRemindOffsetUnit').value = 'minutes';
+
+            const modalEl = document.getElementById('mainModal');
+            const bs = new bootstrap.Modal(modalEl);
+            bs.show();
+        } catch (err) {
+            console.error(err);
+            alert('Lỗi khi lấy dữ liệu exam. Xem console.');
+        }
+    }
+
+    async function openEditNote(id) {
+        try {
+            const res = await fetch('/api/notes/' + id);
+            if (!res.ok) { alert('Không lấy được dữ liệu note'); return; }
+            const n = await res.json();
+            document.getElementById('noteForm').style.display='';
+            document.getElementById('examForm').style.display='none';
+            document.getElementById('modalTitle').innerText=i18next.t('modal.add');
+            document.getElementById('noteId').value = n.id;
+            document.getElementById('noteDate').value = n.date;
+            if (n.time && n.time.includes('-')) {
+                const parts = n.time.split('-').map(s => s.trim());
+                document.getElementById('noteStartTime').value = parts[0] || '';
+                document.getElementById('noteEndTime').value = parts[1] || '';
+            } else {
+                document.getElementById('noteStartTime').value = n.time || '';
+                document.getElementById('noteEndTime').value = '';
+            }
+            document.getElementById('noteSubject').value = n.subject;
+            document.getElementById('noteTitle').value = n.title;
+            document.getElementById('noteContent').value = n.content;
+            document.getElementById('notePriority').value = n.priority || 'Low';
+            await populateNoteExamSelect();
+            document.getElementById('noteExamSelect').value = n.exam ? n.exam.id : '';
+
+            document.getElementById('noteRemindExact').value = toDateTimeLocalValue(n.remindAt || '');
+            document.getElementById('noteRemindOffsetNumber').value = '';
+            document.getElementById('noteRemindOffsetUnit').value = 'minutes';
+
+            const modalEl = document.getElementById('mainModal');
+            const bs = new bootstrap.Modal(modalEl);
+            bs.show();
+        } catch (err) {
+            console.error(err);
+            alert('Lỗi khi lấy dữ liệu note. Xem console.');
+        }
+    }
+
+    // ---------- Initialization after i18n ----------
+    async function initAppAfterI18n(){
+        selectedDate = new Date();
+        viewDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+        document.getElementById('selectedDateLabel').innerText = i18next.t('field.date') + ': ' + formatYMD(selectedDate);
+
+        // Hash routing safety:
+        // If the page was loaded at path /statistical (no hash), rewrite to /#/
+        if (location.pathname && location.pathname.toLowerCase().indexOf('statistical') !== -1 && !location.hash) {
+            // change URL in browser to use hash - this avoids reload 404 on direct refresh
+            history.replaceState(null, '', '/' + '#/statistical');
+        }
+
+        // Hash routing handlers (use hash to avoid server rewrite requirements)
+        window.addEventListener('hashchange', handleHashChange);
+        // initial check
+        handleHashChange();
+
+        await renderCalendar();
+        await loadDetailsForSelectedDate();
+
+        // add event listeners that rely on elements
+        document.getElementById('addBtn').addEventListener('click', ()=> {
+            // open create modal (default to note)
+            document.getElementById('noteForm').style.display='';
+            document.getElementById('examForm').style.display='none';
+            document.getElementById('modalTitle').innerText=i18next.t('modal.add');
+            document.getElementById('noteId').value='';
+            document.getElementById('noteDate').value = formatYMD(selectedDate);
+            document.getElementById('noteStartTime').value='';
+            document.getElementById('noteEndTime').value='';
+            document.getElementById('noteSubject').value='';
+            document.getElementById('noteTitle').value='';
+            document.getElementById('noteContent').value='';
+            document.getElementById('notePriority').value='Low';
+            document.getElementById('noteExamSelect').value='';
+            document.getElementById('noteRemindExact').value='';
+            document.getElementById('noteRemindOffsetNumber').value='';
+            document.getElementById('noteRemindOffsetUnit').value='minutes';
+
+            const modalEl = document.getElementById('mainModal');
+            const bs = new bootstrap.Modal(modalEl);
+            bs.show();
+        });
+
+        // attach UI buttons that control stats
+        document.getElementById('statsBtn').addEventListener('click', () => {
+            // switch to hash route
+            if (location.hash !== '#/statistical') location.hash = '#/statistical';
+        });
+        document.getElementById('backToHomeBtn').addEventListener('click', () => {
+            if (location.hash !== '' && location.hash !== '#/calendar') location.hash = '#/calendar';
+            else { /* if already root */ handleHashChange(); }
+        });
+        document.getElementById('homeBtn').addEventListener('click', () => {
+            if (location.hash !== '' && location.hash !== '#/calendar') location.hash = '#/calendar';
+            else handleHashChange();
+        });
+
+        // week nav
+        document.getElementById('prevWeekBtn').addEventListener('click', async () => {
+            showingWeekStart = new Date(showingWeekStart.getFullYear(), showingWeekStart.getMonth(), showingWeekStart.getDate() - 7);
+            await loadWeekStats(showingWeekStart);
+        });
+        document.getElementById('nextWeekBtn').addEventListener('click', async () => {
+            const candidate = new Date(showingWeekStart.getFullYear(), showingWeekStart.getMonth(), showingWeekStart.getDate() + 7);
+            if (candidate.getTime() > currentWeekLimit.getTime()) {
+                showingWeekStart = new Date(currentWeekLimit);
+            } else {
+                showingWeekStart = candidate;
+            }
+            await loadWeekStats(showingWeekStart);
+        });
+        document.getElementById('thisWeekBtn').addEventListener('click', async () => {
+            showingWeekStart = new Date(currentWeekLimit);
+            await loadWeekStats(showingWeekStart);
+        });
+
+        // stats filter change
+        document.getElementById('statsSubjectFilter').addEventListener('change', () => {
+            if (!cachedWeekData) return;
+            renderChartFromAggregated(cachedWeekData);
+        });
+
+        // auto-refresh
+        setInterval(async ()=>{ await loadDetailsForSelectedDate(); await renderCalendar(); }, 10000);
+    }
+
+    // Hash routing functions
+    const currentWeekLimit = getStartOfWeek(new Date()); // Sunday
+    let showingWeekStart = new Date(currentWeekLimit);
+    let cachedWeekData = null;
+    let statsChart = null;
+
+    function handleHashChange(){
+        const hash = location.hash || '#/calendar';
+        if (hash.startsWith('#/statistical')) {
+            // show stats page
+            showingWeekStart = new Date(currentWeekLimit);
+            loadWeekStats(showingWeekStart).then(()=> {
+                document.getElementById('statsPage').style.display = 'block';
+                document.getElementById('mainCenter').style.display = 'none';
+                document.getElementById('rightPanel').style.display = 'none';
+                document.getElementById('statsPage').setAttribute('aria-hidden','false');
+            });
+        } else {
+            // default: calendar
+            document.getElementById('statsPage').style.display = 'none';
+            document.getElementById('mainCenter').style.display = '';
+            document.getElementById('rightPanel').style.display = '';
+            document.getElementById('statsPage').setAttribute('aria-hidden','true');
+        }
+    }
+
+    function getStartOfWeek(refDate) {
+        const d = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+        const day = d.getDay(); // 0=Sun..6=Sat
+        d.setDate(d.getDate() - day);
+        d.setHours(0,0,0,0);
+        return d;
+    }
+    function getWeekDates(startDate) {
+        const arr = [];
+        for (let i=0;i<7;i++){
+            const d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i);
+            arr.push(d);
+        }
+        return arr;
+    }
+
+    async function loadWeekStats(weekStartDate) {
+        // prevent future weeks
+        if (weekStartDate.getTime() > currentWeekLimit.getTime()) {
+            weekStartDate = new Date(currentWeekLimit);
+        }
+        const locale = i18next.language || undefined;
+        document.getElementById('statsWeekLabel').innerText = `${formatYMD(weekStartDate)} → ${formatYMD(new Date(weekStartDate.getFullYear(),weekStartDate.getMonth(), weekStartDate.getDate()+6))}`;
+        document.getElementById('statsSummary').innerHTML = i18next.t('loading') || 'Đang tải dữ liệu...';
+
+        const dates = getWeekDates(weekStartDate);
+        const today = new Date();
+        const promises = dates.map(d => {
+            const normalized = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+            const todayNorm = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            if (normalized.getTime() > todayNorm.getTime()) return Promise.resolve([]);
+            return fetchNotesByDate(formatYMD(d));
+        });
+
+        const results = await Promise.all(promises);
+        const allDoneNotes = [];
+        results.forEach((notes, idx) => {
+            (notes || []).forEach(n => {
+                const st = (typeof determineStatus === 'function') ? determineStatus(n) : (n.status || '').toLowerCase() === 'done' ? 'Done' : 'Pending';
+                if (String(st).toLowerCase() === 'done') {
+                    n._dayIndex = idx;
+                    allDoneNotes.push(n);
+                }
+            });
+        });
+
+        const subjects = new Set();
+        const perSubjectPerDay = {};
+        let skipped = 0;
+        allDoneNotes.forEach(n => {
+            const mins = parseNoteDurationMinutes(n);
+            if (mins === null) { skipped++; return; }
+            const subj = (n.subject || (i18next.t('no_subject') || 'Không rõ')).trim();
+            subjects.add(subj);
+            if (!perSubjectPerDay[subj]) perSubjectPerDay[subj] = Array(7).fill(0);
+            perSubjectPerDay[subj][n._dayIndex] += mins;
+        });
+
+        const dataObj = {
+            weekStart: weekStartDate,
+            dates: dates,
+            subjects: Array.from(subjects),
+            perSubjectPerDay: perSubjectPerDay,
+            skippedCount: skipped,
+            totalDone: allDoneNotes.length
+        };
+        cachedWeekData = dataObj;
+        populateSubjectFilter(dataObj.subjects);
+        renderChartFromAggregated(dataObj);
+
+        if (weekStartDate.getTime() >= currentWeekLimit.getTime()) document.getElementById('nextWeekBtn').classList.add('disabled-btn');
+        else document.getElementById('nextWeekBtn').classList.remove('disabled-btn');
+
+        document.getElementById('statsSummary').innerHTML = i18next.t('total_done', { total: dataObj.totalDone, skipped: skipped });
+    }
+
+    function populateSubjectFilter(subjects) {
+        const sel = document.getElementById('statsSubjectFilter');
+        sel.innerHTML = '';
+        const allOpt = document.createElement('option');
+        allOpt.value = '__all';
+        allOpt.innerText = i18next.t('filter.allSubjects');
+        sel.appendChild(allOpt);
+        subjects.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s;
+            opt.innerText = s;
+            sel.appendChild(opt);
+        });
+        sel.value = '__all';
+    }
+
+    function renderChartFromAggregated(dataObj) {
+        const filter = document.getElementById('statsSubjectFilter').value;
+        const labels = dataObj.dates.map(d => {
+            const dayName = d.toLocaleDateString(i18next.language || undefined, { weekday:'short' });
+            return `${dayName}\n${pad(d.getDate())}/${pad(d.getMonth()+1)}`;
+        });
+
+        const ctx = document.getElementById('statsChart').getContext('2d');
+
+        if (statsChart) { statsChart.destroy(); statsChart = null; }
+
+        if (filter && filter !== '__all') {
+            const arr = dataObj.perSubjectPerDay[filter] || Array(7).fill(0);
+            statsChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${filter} (${i18next.t('minutes')})`,
+                        data: arr
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: { y: { beginAtZero: true, title: { display: true, text: i18next.t('minutes') } } }
+                }
+            });
+        } else {
+            const datasets = [];
+            Object.keys(dataObj.perSubjectPerDay).forEach(subj => {
+                datasets.push({
+                    label: subj,
+                    data: dataObj.perSubjectPerDay[subj]
+                });
+            });
+            statsChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: labels, datasets: datasets },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true, title: { display: true, text: i18next.t('minutes') } }
+                    },
+                    plugins: { tooltip: { mode: 'index', intersect: false } }
+                }
+            });
+        }
+    }
+
+    function parseNoteDurationMinutes(n) {
+        try {
+            if (n.startTime && n.endTime) {
+                const s = parseHHMM(n.startTime);
+                const e = parseHHMM(n.endTime);
+                if (s !== null && e !== null) return minutesDiff(s, e);
+            }
+            if (n.time && typeof n.time === 'string') {
+                const s = n.time.split('-').map(x => x.trim());
+                if (s.length >= 2) {
+                    const a = parseHHMM(s[0]);
+                    const b = parseHHMM(s[1]);
+                    if (a !== null && b !== null) return minutesDiff(a, b);
+                } else {
+                    return null;
+                }
+            }
+            return null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function parseHHMM(hhmm) {
+        if (!hhmm) return null;
+        const t = String(hhmm).trim().substring(0,5);
+        const parts = t.split(':');
+        if (parts.length < 2) return null;
+        const hh = parseInt(parts[0],10);
+        const mm = parseInt(parts[1],10);
+        if (isNaN(hh) || isNaN(mm)) return null;
+        return {hh,mm};
+    }
+    function minutesDiff(a, b) {
+        const am = a.hh*60 + a.mm;
+        const bm = b.hh*60 + b.mm;
+        const diff = bm - am;
+        return diff > 0 ? diff : 0;
+    }
+
+</script>
+</body>
+</html>

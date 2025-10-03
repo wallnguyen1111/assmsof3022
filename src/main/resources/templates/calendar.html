@@ -162,7 +162,7 @@
     </div>
 </div>
 
-<!-- Modal for create/edit (kept as-is) -->
+<!-- Modal for create/edit (added entityType selector) -->
 <div class="modal fade" id="mainModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -171,6 +171,15 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <!-- ADDED: selector to choose note or exam -->
+                <div class="mb-2">
+                    <label>Chọn loại</label>
+                    <select id="entityType" class="form-control">
+                        <option value="note">Ghi chú</option>
+                        <option value="exam">Lịch thi</option>
+                    </select>
+                </div>
+
                 <!-- Note & Exam forms (kept unchanged aside from placeholders where useful) -->
                 <div id="noteForm">
                     <input type="hidden" id="noteId"/>
@@ -358,9 +367,11 @@
                 "field.location":"Địa điểm",
                 "field.type":"Loại",
                 "field.description":"Mô tả",
-                "modal.add":"Thêm",
+                "modal.add":"Thêm Ghi chú",
+                "modal.addExam":"Thêm Lịch thi",
                 "total_done":"Tổng ghi chú Done trong tuần: {{total}}. Bỏ qua {{skipped}} note không có time range để tính.",
-                "minutes":"Phút"
+                "minutes":"Phút",
+                "loading":"Đang tải dữ liệu..."
             }
         },
         en: {
@@ -403,9 +414,11 @@
                 "field.location":"Location",
                 "field.type":"Type",
                 "field.description":"Description",
-                "modal.add":"Add",
+                "modal.add":"Add Note",
+                "modal.addExam":"Add Exam",
                 "total_done":"Total Done notes this week: {{total}}. Skipped {{skipped}} notes without time range.",
-                "minutes":"Minutes"
+                "minutes":"Minutes",
+                "loading":"Loading..."
             }
         }
     };
@@ -1057,10 +1070,10 @@
         }
     }
 
+    // Save button now uses entityType value
     document.getElementById('saveBtn').addEventListener('click', async ()=> {
-        // decide based on which form visible
-        const examFormVisible = document.getElementById('examForm').style.display !== 'none';
-        if (examFormVisible) await saveExamFromModal(); else await saveNoteFromModal();
+        const type = (document.getElementById('entityType') && document.getElementById('entityType').value) ? document.getElementById('entityType').value : 'note';
+        if (type === 'note') await saveNoteFromModal(); else await saveExamFromModal();
     });
 
     // ---------- status endpoints ----------
@@ -1083,9 +1096,12 @@
             const res = await fetch('/api/exams/' + id);
             if (!res.ok) { alert('Không lấy được dữ liệu exam'); return; }
             const e = await res.json();
+
+            // set selector to exam
+            if (document.getElementById('entityType')) document.getElementById('entityType').value = 'exam';
             document.getElementById('noteForm').style.display='none';
             document.getElementById('examForm').style.display='';
-            document.getElementById('modalTitle').innerText=i18next.t('modal.add');
+            document.getElementById('modalTitle').innerText=i18next.t('modal.addExam');
 
             document.getElementById('examId').value = e.id ?? '';
             document.getElementById('examSubject').value = e.subject ?? '';
@@ -1115,9 +1131,13 @@
             const res = await fetch('/api/notes/' + id);
             if (!res.ok) { alert('Không lấy được dữ liệu note'); return; }
             const n = await res.json();
+
+            // set selector to note
+            if (document.getElementById('entityType')) document.getElementById('entityType').value = 'note';
             document.getElementById('noteForm').style.display='';
             document.getElementById('examForm').style.display='none';
             document.getElementById('modalTitle').innerText=i18next.t('modal.add');
+
             document.getElementById('noteId').value = n.id;
             document.getElementById('noteDate').value = n.date;
             if (n.time && n.time.includes('-')) {
@@ -1169,12 +1189,24 @@
         await renderCalendar();
         await loadDetailsForSelectedDate();
 
+        // entityType switcher: show/hide note vs exam form
+        const entityTypeEl = document.getElementById('entityType');
+        if (entityTypeEl) {
+            entityTypeEl.addEventListener('change', (e) => {
+                const v = e.target.value;
+                document.getElementById('noteForm').style.display = (v === 'note') ? '' : 'none';
+                document.getElementById('examForm').style.display = (v === 'exam') ? '' : 'none';
+                document.getElementById('modalTitle').innerText = (v === 'note') ? i18next.t('modal.add') : i18next.t('modal.addExam');
+            });
+        }
+
         // add event listeners that rely on elements
         document.getElementById('addBtn').addEventListener('click', ()=> {
-            // open create modal (default to note)
+            // default to note when creating
+            if (document.getElementById('entityType')) document.getElementById('entityType').value = 'note';
             document.getElementById('noteForm').style.display='';
             document.getElementById('examForm').style.display='none';
-            document.getElementById('modalTitle').innerText=i18next.t('modal.add');
+            document.getElementById('modalTitle').innerText = i18next.t('modal.add');
             document.getElementById('noteId').value='';
             document.getElementById('noteDate').value = formatYMD(selectedDate);
             document.getElementById('noteStartTime').value='';
@@ -1187,6 +1219,18 @@
             document.getElementById('noteRemindExact').value='';
             document.getElementById('noteRemindOffsetNumber').value='';
             document.getElementById('noteRemindOffsetUnit').value='minutes';
+
+            document.getElementById('examId').value='';
+            document.getElementById('examSubject').value='';
+            document.getElementById('examDate').value = formatYMD(selectedDate);
+            document.getElementById('examStartTime').value='';
+            document.getElementById('examDuration').value='';
+            document.getElementById('examLocation').value='';
+            document.getElementById('examType').value='';
+            document.getElementById('examDescription').value='';
+            document.getElementById('examRemindExact').value = '';
+            document.getElementById('examRemindOffsetNumber').value = '';
+            document.getElementById('examRemindOffsetUnit').value = 'minutes';
 
             const modalEl = document.getElementById('mainModal');
             const bs = new bootstrap.Modal(modalEl);

@@ -792,6 +792,7 @@
                 </div>
             `;
 
+            div.querySelector('.btn.edit')?.addEventListener('click', async (ev)=> { ev.stopPropagation(); await openEditExam(e.id); });
             div.querySelector('.btn-edit').addEventListener('click', async (ev)=> { ev.stopPropagation(); await openEditExam(e.id); });
             div.querySelector('.btn-delete-item').addEventListener('click', async (ev)=> {
                 ev.stopPropagation();
@@ -1277,7 +1278,7 @@
         });
 
         // auto-refresh
-        setInterval(async ()=>{ await loadDetailsForSelectedDate(); await renderCalendar(); }, 10000);
+         v
     }
 
     // Hash routing functions
@@ -1487,6 +1488,171 @@
         const diff = bm - am;
         return diff > 0 ? diff : 0;
     }
+
+    // ---------- Auto-expiry scheduler (update UI when item becomes overdue) ----------
+    const scheduledExpiryTimers = {}; // key = `${type}-${id}` -> timeoutId
+    const EXPIRY_MAX_TIMEOUT = 2147483647; // ~24.8 days (max safe setTimeout)
+
+    // compute expiry Date object from entity using existing computeDueDateTime(entity)
+    function computeExpiryDate(entity) {
+        if (typeof computeDueDateTime === 'function') {
+            return computeDueDateTime(entity);
+        }
+        if (entity && entity.date && entity.endTime) {
+            const d = new Date(`${entity.date}T${entity.endTime}`);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        return null;
+    }
+
+    // update single task card UI in-place (no full rerender)
+    function updateTaskCardStatusUI(id, type, newStatus) {
+        const sel = document.querySelector(`.task-card[data-type="${type}"][data-id="${id}"]`);
+        if (!sel) return;
+        sel.classList.remove('status-overdue', 'status-done', 'status-pending');
+        if (newStatus === 'Overdue') sel.classList.add('status-overdue');
+        else if (newStatus === 'Done') sel.classList.add('status-done');
+        else sel.classList.add('status-pending');
+
+        const rightDiv = sel.querySelector('div[style*="text-align:right"]') || sel.querySelector('div:last-child');
+        if (rightDiv) {
+            let statusHTML = '';
+            if (newStatus === 'Overdue') statusHTML = `<span class="status-label text-danger"><span class="status-icon">⚠️</span>Overdue</span>`;
+            else if (newStatus === 'Done') statusHTML = `<span class="status-label text-success"><span class="status-icon">✅</span>Done</span>`;
+            else statusHTML = `<span class="status-label text-muted">Pending</span>`;
+            rightDiv.innerHTML = statusHTML;
+        }
+    }
+
+    // schedule expiry for one entity
+    function scheduleExpiryForEntity(entity, type) {
+        if (!entity || !entity.id) return;
+        const key = `${type}-${entity.id}`;
+
+        if (scheduledExpiryTimers[key]) {
+            clearTimeout(scheduledExpiryTimers[key]);
+            delete scheduledExpiryTimers[key];
+        }
+
+        if (entity.status && String(entity.status).toLowerCase() === 'done') return;
+
+        const expiryDate = computeExpiryDate(entity);
+        if (!expiryDate) return;
+
+        const now = new Date();
+        const ms = expiryDate.getTime() - now.getTime();
+        if (ms <= 0) {
+            entity._computedStatus = 'Overdue';
+            updateTaskCardStatusUI(entity.id, type, 'Overdue');
+            return;
+        }
+
+        if (ms <= EXPIRY_MAX_TIMEOUT) {
+            scheduledExpiryTimers[key] = setTimeout(() => {
+                entity._computedStatus = 'Overdue';
+                updateTaskCardStatusUI(entity.id, type, 'Overdue');
+                delete scheduledExpiryTimers[key];
+            }, ms);
+        } else {
+            scheduledExpiryTimers[key] = setTimeout(() => {
+                delete scheduledExpiryTimers[key];
+                scheduleExpiryForEntity(entity, type);
+            }, EXPIRY_MAX_TIMEOUT);
+        }
+    }
+
+    // schedule expiry for a list of entities (notes/exams)
+    function scheduleExpiryForList(list, type) {
+        const presentKeys = new Set();
+        (list || []).forEach(item => {
+            if (item && item.id) presentKeys.add(`${type}-${item.id}`);
+        });
+        Object.keys(scheduledExpiryTimers).forEach(k => {
+            if (!k.startsWith(type + '-')) return;
+            if (!presentKeys.has(k)) {
+                clearTimeout(scheduledExpiryTimers[k]);
+                delete scheduledExpiryTimers[k];
+            }
+        });
+
+        (list || []).forEach(item => scheduleExpiryForEntity(item, type));
+    }
+
+    // helper to cancel expiry for a single id (call when marking Done or deleting)
+    function clearExpiryTimerFor(id, type) {
+        const key = `${type}-${id}`;
+        if (scheduledExpiryTimers[key]) {
+            clearTimeout(scheduledExpiryTimers[key]);
+            delete scheduledExpiryTimers[key];
+        }
+    }
+
+    // ----- Integration points (auto-wrap) -----
+    (function autoWireExpiry() {
+        const origRenderNotes = window.renderNotesList;
+        if (typeof origRenderNotes === 'function') {
+            window.renderNotesList = async function(notes) {
+                await origRenderNotes(notes);
+                try { scheduleExpiryForList(notes, 'note'); } catch(e){ console.error(e); }
+            };
+        } else {
+            // if not yet defined, wrap later (safety)
+            const intervalCheck = setInterval(() => {
+                if (typeof window.renderNotesList === 'function') {
+                    clearInterval(intervalCheck);
+                    const r = window.renderNotesList;
+                    window.renderNotesList = async function(notes) {
+                        await r(notes);
+                        try { scheduleExpiryForList(notes, 'note'); } catch(e){ console.error(e); }
+                    };
+                }
+            }, 200);
+        }
+
+        const origRenderExams = window.renderExamsList;
+        if (typeof origRenderExams === 'function') {
+            window.renderExamsList = async function(exams) {
+                await origRenderExams(exams);
+                try { scheduleExpiryForList(exams, 'exam'); } catch(e){ console.error(e); }
+            };
+        } else {
+            const intervalCheck2 = setInterval(() => {
+                if (typeof window.renderExamsList === 'function') {
+                    clearInterval(intervalCheck2);
+                    const r = window.renderExamsList;
+                    window.renderExamsList = async function(exams) {
+                        await r(exams);
+                        try { scheduleExpiryForList(exams, 'exam'); } catch(e){ console.error(e); }
+                    };
+                }
+            }, 200);
+        }
+
+        const origSetNoteStatus = window.setNoteStatus;
+        if (typeof origSetNoteStatus === 'function') {
+            window.setNoteStatus = async function(id, status) {
+                const res = await origSetNoteStatus(id, status);
+                if (String(status).toLowerCase() === 'done') {
+                    clearExpiryTimerFor(id, 'note');
+                    updateTaskCardStatusUI(id, 'note', 'Done');
+                }
+                return res;
+            };
+        }
+
+        const origSetExamStatus = window.setExamStatus;
+        if (typeof origSetExamStatus === 'function') {
+            window.setExamStatus = async function(id, status) {
+                const res = await origSetExamStatus(id, status);
+                if (String(status).toLowerCase() === 'done') {
+                    clearExpiryTimerFor(id, 'exam');
+                    updateTaskCardStatusUI(id, 'exam', 'Done');
+                }
+                return res;
+            };
+        }
+    })();
+    // ------------------------------------------
 
 </script>
 </body>
